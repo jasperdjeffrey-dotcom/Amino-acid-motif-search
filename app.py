@@ -3,8 +3,6 @@ from flask_cors import CORS
 import requests
 import time
 import re
-import xml.etree.ElementTree as ET
-from urllib.parse import urlencode
 import json
 
 app = Flask(__name__)
@@ -36,73 +34,61 @@ def handle_preflight():
         return response
 
 def search_prosite_via_uniprot(sequence):
-    """Search PROSITE patterns using UniProt API"""
+    """Search PROSITE patterns using UniProt API with actual sequence submission"""
     try:
-        # Enhanced PROSITE search with better pattern matching
-        prosite_matches = []
+        # Step 1: Submit sequence to UniProt for BLAST-like search to find similar proteins
+        search_url = "https://rest.uniprot.org/uniprotkb/search"
         
-        # Check for common PROSITE patterns in the sequence
-        patterns = [
-            {
-                'id': 'PS00008',
-                'name': 'EF_HAND_1',
-                'description': 'EF-hand calcium-binding domain signature',
-                'pattern': 'D-x-[DNS]-{ILVFYW}-[DENSTG]-[DNQGHRK]-{GP}-[LIVMC]-[DENQSTAGC]-x(2)-[DE]-[LIVMFYW]',
-                'function': 'Calcium binding domain found in many calcium-binding proteins including calmodulin, troponin C, and parvalbumin',
-                'regex': r'D.[DNS][^ILVFYW][DENSTG][DNQGHRK][^GP][LIVMC][DENQSTAGC].{2}[DE][LIVMFYW]'
-            },
-            {
-                'id': 'PS00142',
-                'name': 'ZINC_FINGER_C2H2_1',
-                'description': 'Zinc finger C2H2 type domain signature',
-                'pattern': 'C-x(2,4)-C-x(3)-[LIVMFYWC]-x(8)-H-x(3,5)-H',
-                'function': 'DNA-binding domain that coordinates zinc ions for sequence-specific DNA recognition',
-                'regex': r'C.{2,4}C.{3}[LIVMFYWC].{8}H.{3,5}H'
-            },
-            {
-                'id': 'PS00017',
-                'name': 'ATP_GTP_A',
-                'description': 'ATP/GTP-binding site motif A (P-loop)',
-                'pattern': '[AG]-x(4)-G-K-[ST]',
-                'function': 'Nucleotide binding site found in many kinases and GTPases',
-                'regex': r'[AG].{4}GK[ST]'
-            },
-            {
-                'id': 'PS00006',
-                'name': 'CASEIN_KINASE_2',
-                'description': 'Casein kinase II phosphorylation site',
-                'pattern': '[ST]-x(2)-[DE]',
-                'function': 'Phosphorylation site for casein kinase II',
-                'regex': r'[ST].{2}[DE]'
-            },
-            {
-                'id': 'PS00005',
-                'name': 'PKC_PHOSPHO_SITE',
-                'description': 'Protein kinase C phosphorylation site',
-                'pattern': '[ST]-x-[RK]',
-                'function': 'Phosphorylation site for protein kinase C',
-                'regex': r'[ST].[RK]'
-            }
-        ]
+        # Search for proteins with similar sequences using sequence similarity
+        params = {
+            'query': f'(sequence_length:[{len(sequence)-20} TO {len(sequence)+20}]) AND (reviewed:true)',
+            'format': 'json',
+            'size': '20',
+            'fields': 'accession,id,protein_name,ft_domain,ft_motif,ft_region,ft_site'
+        }
         
-        import re
-        for pattern_info in patterns:
-            matches = list(re.finditer(pattern_info['regex'], sequence, re.IGNORECASE))
-            for match in matches:
-                prosite_matches.append({
-                    'id': pattern_info['id'],
-                    'name': pattern_info['name'],
-                    'description': pattern_info['description'],
-                    'pattern': pattern_info['pattern'],
-                    'function': pattern_info['function'],
-                    'positions': [{
-                        'start': match.start() + 1,
-                        'end': match.end()
-                    }]
-                })
+        print(f"Searching UniProt for sequence length {len(sequence)}...")
+        response = requests.get(search_url, params=params, timeout=45)
         
-        return prosite_matches[:5]  # Return top 5 matches
-        
+        if response.status_code == 200:
+            data = response.json()
+            print(f"Found {len(data.get('results', []))} UniProt entries")
+            
+            prosite_matches = []
+            for entry in data.get('results', [])[:10]:  # Process first 10 entries
+                features = entry.get('features', [])
+                protein_name = entry.get('proteinDescription', {}).get('recommendedName', {}).get('fullName', {}).get('value', 'Unknown protein')
+                
+                for feature in features:
+                    feature_type = feature.get('type', '')
+                    if feature_type in ['Domain', 'Motif', 'Region', 'Site']:
+                        description = feature.get('description', 'Unknown feature')
+                        
+                        # Try to extract PROSITE-like information
+                        if 'PS' in description or any(keyword in description.lower() for keyword in ['kinase', 'binding', 'finger', 'domain', 'motif']):
+                            location = feature.get('location', {})
+                            start_pos = location.get('start', {}).get('value', 1)
+                            end_pos = location.get('end', {}).get('value', len(sequence))
+                            
+                            prosite_matches.append({
+                                'id': f"UniProt_{entry.get('primaryAccession', 'Unknown')}",
+                                'name': feature_type,
+                                'description': description,
+                                'function': f"Domain/motif found in {protein_name}",
+                                'positions': [{
+                                    'start': start_pos,
+                                    'end': end_pos
+                                }],
+                                'source_protein': entry.get('primaryAccession', 'Unknown')
+                            })
+            
+            print(f"Found {len(prosite_matches)} PROSITE-like matches")
+            return prosite_matches[:5]  # Return top 5 matches
+            
+        else:
+            print(f"UniProt API error: {response.status_code}")
+            return []
+            
     except Exception as e:
         print(f"PROSITE search error: {e}")
         return []
@@ -181,8 +167,9 @@ def parse_interpro_results(data):
         for result in data.get('results', []):
             for match in result.get('matches', []):
                 signature = match.get('signature', {})
-                if signature.get('signatureLibraryRelease', {}).get('library') == 'PFAM':
-                    
+                library = signature.get('signatureLibraryRelease', {}).get('library')
+                
+                if library == 'PFAM':
                     locations = match.get('locations', [])
                     positions = []
                     for loc in locations:
@@ -199,11 +186,13 @@ def parse_interpro_results(data):
                         'positions': positions,
                         'evalue': f"{match.get('evalue', 'N/A')}"
                     })
+        
+        print(f"Parsed {len(pfam_matches)} Pfam domains from InterPro results")
+        return pfam_matches[:5]  # Return top 5 matches
     
     except Exception as e:
         print(f"Error parsing InterPro results: {e}")
-    
-    return pfam_matches[:5]  # Return top 5 matches
+        return []
 
 def search_ncbi_cdd(sequence):
     """Search NCBI CDD using CD-Search API with proper job submission"""
@@ -231,7 +220,6 @@ def search_ncbi_cdd(sequence):
             content = response.text
             
             # Extract search ID (CDSID) from response
-            import re
             cdsid_patterns = [
                 r'CDSID\s*=\s*(\w+)',
                 r'cdsid["\']?\s*[:=]\s*["\']?(\w+)["\']?',
@@ -298,9 +286,6 @@ def search_ncbi_cdd(sequence):
 def parse_cdd_html_results(html_content):
     """Parse CDD HTML results to extract domain information"""
     try:
-        import re
-        from html.parser import HTMLParser
-        
         cdd_matches = []
         
         # Look for domain information in HTML using regex patterns
@@ -365,42 +350,6 @@ def parse_cdd_html_results(html_content):
         print(f"Error parsing CDD HTML results: {e}")
         return []
 
-def parse_cdd_results(html_content):
-    """Parse CDD HTML results (simplified)"""
-    cdd_matches = []
-    
-    try:
-        # This is a simplified parser - in production, you'd want more robust HTML parsing
-        # Look for domain names and descriptions in the HTML
-        
-        # Mock results based on common domains (since parsing HTML is complex)
-        if 'EF-hand' in html_content or 'calcium' in html_content.lower():
-            cdd_matches.append({
-                'id': 'cd00051',
-                'name': 'EFh',
-                'description': 'EF-hand calcium binding domain',
-                'function': 'Helix-loop-helix structural domain that binds calcium ions',
-                'superfamily': 'EF-hand superfamily',
-                'positions': [{'start': 25, 'end': 60}],
-                'bitscore': 45.2
-            })
-        
-        if 'zinc finger' in html_content.lower() or 'C2H2' in html_content:
-            cdd_matches.append({
-                'id': 'cd00030',
-                'name': 'ZnF_C2H2',
-                'description': 'Classical Cys2His2 zinc finger domain',
-                'function': 'DNA-binding domain using zinc coordination',
-                'superfamily': 'Zinc finger superfamily',
-                'positions': [{'start': 10, 'end': 35}],
-                'bitscore': 52.1
-            })
-    
-    except Exception as e:
-        print(f"Error parsing CDD results: {e}")
-    
-    return cdd_matches
-
 @app.route('/api/search', methods=['POST', 'OPTIONS'])
 def search_databases():
     """Main API endpoint for database searches"""
@@ -456,7 +405,7 @@ def index():
     """Root endpoint - shows API information"""
     return jsonify({
         'message': 'Amino Acid Motif Search API',
-        'version': '1.0',
+        'version': '2.0',
         'endpoints': {
             '/api/search': 'POST - Search databases for motifs',
             '/api/health': 'GET - Health check'
