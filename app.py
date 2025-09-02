@@ -11,8 +11,8 @@ app = Flask(__name__)
 CORS(app, origins=["https://jasperdjeffrey-dotcom.github.io", "http://localhost:*", "https://localhost:*"])
 
 # Configuration
-INTERPROSCAN_EMAIL = "your-email@domain.com"  # Replace with your email
-NCBI_EMAIL = "your-email@domain.com"  # Replace with your email
+INTERPROSCAN_EMAIL = "johncena190908@gmail.com"  # Replace with your email
+NCBI_EMAIL = "johncena190908@gmail.com"  # Replace with your email
 
 def search_prosite_via_uniprot(sequence):
     """Search PROSITE patterns using UniProt API"""
