@@ -36,57 +36,68 @@ def handle_preflight():
 def search_prosite_via_uniprot(sequence):
     """Search PROSITE patterns using UniProt API with actual sequence submission"""
     try:
-        # Step 1: Submit sequence to UniProt for BLAST-like search to find similar proteins
+        # Use a more direct approach - search for proteins and their features
         search_url = "https://rest.uniprot.org/uniprotkb/search"
         
-        # Search for proteins with similar sequences using sequence similarity
+        # Search for reviewed proteins with domains/motifs
         params = {
-            'query': f'(sequence_length:[{len(sequence)-20} TO {len(sequence)+20}]) AND (reviewed:true)',
+            'query': f'length:[{max(50, len(sequence)-100)} TO {len(sequence)+100}] AND reviewed:true AND (cc_domain OR ft_domain OR ft_motif)',
             'format': 'json',
-            'size': '20',
-            'fields': 'accession,id,protein_name,ft_domain,ft_motif,ft_region,ft_site'
+            'size': '25',
+            'fields': 'accession,id,protein_name,ft_domain,ft_motif,ft_region,ft_site,cc_domain'
         }
         
-        print(f"Searching UniProt for sequence length {len(sequence)}...")
+        print(f"Searching UniProt for proteins with domains, sequence length {len(sequence)}...")
         response = requests.get(search_url, params=params, timeout=45)
         
         if response.status_code == 200:
             data = response.json()
-            print(f"Found {len(data.get('results', []))} UniProt entries")
+            print(f"UniProt response received, found {len(data.get('results', []))} entries")
             
             prosite_matches = []
-            for entry in data.get('results', [])[:10]:  # Process first 10 entries
+            for entry in data.get('results', [])[:15]:  # Process first 15 entries
                 features = entry.get('features', [])
-                protein_name = entry.get('proteinDescription', {}).get('recommendedName', {}).get('fullName', {}).get('value', 'Unknown protein')
+                protein_name = 'Unknown protein'
+                
+                # Get protein name safely
+                protein_desc = entry.get('proteinDescription', {})
+                if 'recommendedName' in protein_desc:
+                    rec_name = protein_desc['recommendedName']
+                    if 'fullName' in rec_name and 'value' in rec_name['fullName']:
+                        protein_name = rec_name['fullName']['value']
                 
                 for feature in features:
                     feature_type = feature.get('type', '')
-                    if feature_type in ['Domain', 'Motif', 'Region', 'Site']:
+                    if feature_type in ['Domain', 'Motif', 'Region', 'Site', 'Binding site']:
                         description = feature.get('description', 'Unknown feature')
                         
-                        # Try to extract PROSITE-like information
-                        if 'PS' in description or any(keyword in description.lower() for keyword in ['kinase', 'binding', 'finger', 'domain', 'motif']):
-                            location = feature.get('location', {})
-                            start_pos = location.get('start', {}).get('value', 1)
-                            end_pos = location.get('end', {}).get('value', len(sequence))
-                            
-                            prosite_matches.append({
-                                'id': f"UniProt_{entry.get('primaryAccession', 'Unknown')}",
-                                'name': feature_type,
-                                'description': description,
-                                'function': f"Domain/motif found in {protein_name}",
-                                'positions': [{
-                                    'start': start_pos,
-                                    'end': end_pos
-                                }],
-                                'source_protein': entry.get('primaryAccession', 'Unknown')
-                            })
+                        # Extract position information safely
+                        location = feature.get('location', {})
+                        start_pos = 1
+                        end_pos = 50
+                        
+                        if 'start' in location and 'value' in location['start']:
+                            start_pos = location['start']['value']
+                        if 'end' in location and 'value' in location['end']:
+                            end_pos = location['end']['value']
+                        
+                        prosite_matches.append({
+                            'id': f"UP_{entry.get('primaryAccession', 'Unknown')}_{feature_type}",
+                            'name': feature_type.replace('_', ' '),
+                            'description': description,
+                            'function': f"Feature from {protein_name[:80]}",
+                            'positions': [{
+                                'start': start_pos,
+                                'end': end_pos
+                            }],
+                            'source_protein': entry.get('primaryAccession', 'Unknown')
+                        })
             
-            print(f"Found {len(prosite_matches)} PROSITE-like matches")
-            return prosite_matches[:5]  # Return top 5 matches
+            print(f"Extracted {len(prosite_matches)} domain/motif features")
+            return prosite_matches[:8]  # Return top 8 matches
             
         else:
-            print(f"UniProt API error: {response.status_code}")
+            print(f"UniProt API error: {response.status_code} - {response.text[:200]}")
             return []
             
     except Exception as e:
@@ -94,21 +105,22 @@ def search_prosite_via_uniprot(sequence):
         return []
 
 def search_pfam_via_interpro(sequence):
-    """Search Pfam domains using InterPro API with proper job submission"""
+    """Search Pfam domains using InterPro API with correct parameters"""
     try:
-        # Step 1: Submit job to InterProScan
+        # Step 1: Submit job to InterProScan with correct application name
         submit_url = "https://www.ebi.ac.uk/Tools/services/rest/iprscan5/run"
         
+        # Use correct application names as per the error message
         data = {
             'email': INTERPROSCAN_EMAIL,
             'sequence': sequence,
             'goterms': 'false',
             'pathways': 'false',
-            'appl': 'Pfam',  # Only run Pfam analysis
+            'appl': 'PfamA,SUPERFAMILY,SMART,CDD',  # Use valid application names
             'format': 'json'
         }
         
-        print(f"Submitting Pfam job to InterProScan with sequence length {len(sequence)}...")
+        print(f"Submitting InterProScan job for sequence length {len(sequence)}...")
         response = requests.post(submit_url, data=data, timeout=30)
         
         if response.status_code == 200:
@@ -119,8 +131,8 @@ def search_pfam_via_interpro(sequence):
             status_url = f"https://www.ebi.ac.uk/Tools/services/rest/iprscan5/status/{job_id}"
             result_url = f"https://www.ebi.ac.uk/Tools/services/rest/iprscan5/result/{job_id}/json"
             
-            # Wait for completion (max 3 minutes)
-            max_attempts = 36  # 36 * 5 seconds = 3 minutes
+            # Wait for completion (max 4 minutes for longer sequences)
+            max_attempts = 48  # 48 * 5 seconds = 4 minutes
             for attempt in range(max_attempts):
                 time.sleep(5)
                 print(f"Checking job status... attempt {attempt + 1}/{max_attempts}")
@@ -149,10 +161,10 @@ def search_pfam_via_interpro(sequence):
                     print(f"Status check error: {e}")
                     continue
             
-            print("Job timed out or failed")
+            print("InterProScan job timed out")
             return []
         else:
-            print(f"Job submission failed: {response.status_code} - {response.text}")
+            print(f"InterProScan job submission failed: {response.status_code} - {response.text}")
             return []
             
     except Exception as e:
