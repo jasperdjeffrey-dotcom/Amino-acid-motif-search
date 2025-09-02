@@ -160,6 +160,17 @@
             transform: none;
         }
         
+        .api-notice {
+            background: #e3f2fd;
+            border: 2px solid #2196f3;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            color: #1565c0;
+            text-align: center;
+            font-size: 0.95em;
+        }
+        
         .syntax-help {
             background: #e8f5e8;
             border: 2px solid #4caf50;
@@ -402,15 +413,6 @@
         .fade-in {
             animation: fadeIn 0.5s ease-out;
         }
-        
-        .warning {
-            background: #fff3cd;
-            border: 2px solid #ffc107;
-            color: #856404;
-            padding: 15px;
-            border-radius: 10px;
-            margin-bottom: 15px;
-        }
     </style>
 </head>
 <body>
@@ -464,6 +466,10 @@
                 </div>
             </div>
             
+            <div class="api-notice">
+                🌐 Database searches may take 1-3 minutes as they query real protein databases (PROSITE, Pfam, NCBI-CDD)
+            </div>
+            
             <button class="search-btn" onclick="performSearch()">🔍 Search for Motifs</button>
         </div>
         
@@ -474,6 +480,9 @@
     </div>
 
     <script>
+        // IMPORTANT: Update this URL to your deployed backend
+        const API_BASE_URL = 'https://amino-acid-motif-search-production.up.railway.app';
+
         let searchResults = {
             custom: [],
             prosite: [],
@@ -538,7 +547,7 @@
             
             return new RegExp(regex.join(''), 'gi');
         }
-        
+
         function searchCustomPattern(sequence, motifPattern) {
             const matches = [];
             
@@ -564,146 +573,34 @@
             
             return matches;
         }
-        
-        // Simulated database searches 
-        async function searchPROSITE(sequence) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            const prositeMotifs = [
-                {
-                    id: 'PS00008',
-                    name: 'EF_HAND_1',
-                    description: 'EF-hand calcium-binding domain signature',
-                    pattern: 'D-x-[DNS]-{ILVFYW}-[DENSTG]-[DNQGHRK]-{GP}-[LIVMC]-[DENQSTAGC]-x(2)-[DE]-[LIVMFYW]',
-                    function: 'Calcium binding domain found in many calcium-binding proteins including calmodulin, troponin C, and parvalbumin'
-                },
-                {
-                    id: 'PS00142',
-                    name: 'ZINC_FINGER_C2H2_1',
-                    description: 'Zinc finger C2H2 type domain signature',
-                    pattern: 'C-x(2,4)-C-x(3)-[LIVMFYWC]-x(8)-H-x(3,5)-H',
-                    function: 'DNA-binding domain that coordinates zinc ions for sequence-specific DNA recognition'
-                },
-                {
-                    id: 'PS00237',
-                    name: 'G_PROTEIN_RECEP_F1_1',
-                    description: 'G-protein coupled receptors family 1 signature',
-                    pattern: '[GSTAIV]-[GNPD]-{P}-x(2)-[SAG]-{P}-[STAV]-x(2)-[SAGVT]-x(2)-[STPA]-x(2)-[LIVMSTAGC]-x(2)-[STGNH]-[STAV]-C-C',
-                    function: 'Seven-transmembrane domain receptors that couple to G-proteins for signal transduction'
+
+        // Real database search function
+        async function searchDatabases(sequence, databases) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/search`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        sequence: sequence,
+                        databases: databases
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ error: 'Network error' }));
+                    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
                 }
-            ];
-            
-            const matches = [];
-            for (const motif of prositeMotifs) {
-                // Enhanced mock matching based on sequence characteristics
-                if ((motif.id === 'PS00008' && (sequence.includes('D') && sequence.includes('E'))) ||
-                    (motif.id === 'PS00142' && sequence.match(/C.{2,4}C.{3}[LIVMFYWC].{8}H.{3,5}H/i)) ||
-                    (motif.id === 'PS00237' && sequence.includes('CC'))) {
-                    
-                    // Find actual positions for demonstration
-                    let positions = [];
-                    if (motif.id === 'PS00142') {
-                        const zfPattern = /C.{2,4}C.{3}[LIVMFYWC].{8}H.{3,5}H/gi;
-                        let match;
-                        while ((match = zfPattern.exec(sequence)) !== null) {
-                            positions.push({ start: match.index + 1, end: match.index + match[0].length });
-                        }
-                    } else {
-                        // Mock positions for other motifs
-                        positions = [{ start: Math.floor(Math.random() * (sequence.length - 20)) + 1, end: Math.floor(Math.random() * (sequence.length - 20)) + 20 }];
-                    }
-                    
-                    if (positions.length > 0) {
-                        matches.push({
-                            ...motif,
-                            positions: positions
-                        });
-                    }
-                }
+
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('Database search error:', error);
+                throw error;
             }
-            
-            return matches;
         }
-        
-        async function searchPfam(sequence) {
-            await new Promise(resolve => setTimeout(resolve, 1200));
-            
-            const pfamDomains = [
-                {
-                    id: 'PF00036',
-                    name: 'EF-hand',
-                    description: 'EF hand calcium-binding domain',
-                    function: 'Calcium-binding domain with helix-loop-helix structure, found in calmodulin, troponin C, and many other calcium-binding proteins'
-                },
-                {
-                    id: 'PF00096',
-                    name: 'zf-C2H2',
-                    description: 'Zinc finger, C2H2 type',
-                    function: 'Classic zinc finger domain that binds DNA in a sequence-specific manner using zinc coordination'
-                },
-                {
-                    id: 'PF00001',
-                    name: '7tm_1',
-                    description: '7 transmembrane receptor (rhodopsin family)',
-                    function: 'G-protein coupled receptor with seven transmembrane helices for signal transduction'
-                }
-            ];
-            
-            const matches = [];
-            for (const domain of pfamDomains) {
-                // Enhanced mock matching
-                if ((domain.id === 'PF00036' && sequence.includes('D') && sequence.includes('E')) ||
-                    (domain.id === 'PF00096' && sequence.match(/C.{2,4}C.{8,15}H.{3,5}H/i)) ||
-                    (domain.id === 'PF00001' && sequence.length > 200)) {
-                    
-                    matches.push({
-                        ...domain,
-                        positions: [{ start: Math.floor(Math.random() * 50) + 1, end: Math.floor(Math.random() * 50) + 80 }],
-                        evalue: (Math.random() * 1e-10).toExponential(1)
-                    });
-                }
-            }
-            
-            return matches;
-        }
-        
-        async function searchNCBI_CDD(sequence) {
-            await new Promise(resolve => setTimeout(resolve, 800));
-            
-            const cddDomains = [
-                {
-                    id: 'cd00051',
-                    name: 'EFh',
-                    description: 'EF-hand calcium binding domain',
-                    function: 'Helix-loop-helix structural domain that binds calcium ions through coordinated acidic residues',
-                    superfamily: 'EF-hand superfamily'
-                },
-                {
-                    id: 'cd00030',
-                    name: 'ZnF_C2H2',
-                    description: 'Classical Cys2His2 zinc finger domain',
-                    function: 'DNA-binding domain that uses zinc coordination for structural stability and sequence-specific recognition',
-                    superfamily: 'Zinc finger superfamily'
-                }
-            ];
-            
-            const matches = [];
-            for (const domain of cddDomains) {
-                // Enhanced mock matching
-                if ((domain.id === 'cd00051' && sequence.includes('D') && sequence.includes('E')) ||
-                    (domain.id === 'cd00030' && sequence.match(/C.{2,4}C.{8,15}H.{3,5}H/i))) {
-                    
-                    matches.push({
-                        ...domain,
-                        positions: [{ start: Math.floor(Math.random() * 30) + 1, end: Math.floor(Math.random() * 30) + 50 }],
-                        bitscore: Math.floor(Math.random() * 100) + 30
-                    });
-                }
-            }
-            
-            return matches;
-        }
-        
+
         function displayResults() {
             const resultsDiv = document.getElementById('results');
             const hasCustom = searchResults.custom.length > 0;
@@ -773,15 +670,18 @@
                         html += `
                             <div class="database-match fade-in">
                                 <div class="db-match-header">
-                                    <div class="motif-id">${match.id} - ${match.name}</div>
+                                    <div class="motif-id">${match.id || 'N/A'} - ${match.name || 'Unknown'}</div>
                                     <div class="db-name">${db.name}</div>
                                 </div>
-                                <div class="motif-description">${match.description}</div>
+                                <div class="motif-description">${match.description || 'No description available'}</div>
                                 ${match.pattern ? `<div class="motif-pattern">Pattern: ${match.pattern}</div>` : ''}
-                                <div class="motif-description"><strong>Function:</strong> ${match.function}</div>
+                                <div class="motif-description"><strong>Function:</strong> ${match.function || 'Function not specified'}</div>
                                 ${match.superfamily ? `<div class="motif-description"><strong>Superfamily:</strong> ${match.superfamily}</div>` : ''}
                                 <div class="match-positions">
-                                    Positions: ${match.positions.map(p => `${p.start}-${p.end}`).join(', ')}
+                                    ${match.positions && match.positions.length > 0 
+                                        ? `Positions: ${match.positions.map(p => `${p.start}-${p.end}`).join(', ')}`
+                                        : 'Position information not available'
+                                    }
                                     ${match.evalue ? ` | E-value: ${match.evalue}` : ''}
                                     ${match.bitscore ? ` | Bit score: ${match.bitscore}` : ''}
                                 </div>
@@ -794,7 +694,7 @@
             
             resultsDiv.innerHTML = html;
         }
-        
+
         function showTab(tabName) {
             // Hide all tabs
             document.querySelectorAll('.tab-content').forEach(tab => {
@@ -808,7 +708,7 @@
             document.getElementById(`${tabName}-tab`).classList.add('active');
             event.target.classList.add('active');
         }
-        
+
         async function performSearch() {
             const motifInput = document.getElementById('motif').value.trim();
             const sequenceInput = document.getElementById('sequence').value.trim().replace(/\s+/g, '').toUpperCase();
@@ -827,6 +727,23 @@
                 resultsDiv.innerHTML = `
                     <h3>🎯 Search Results</h3>
                     <div class="error">Invalid sequence: Please use only standard amino acid letters (A-Z, excluding B, J, O, U, X, Z).</div>
+                `;
+                return;
+            }
+            
+            // Check sequence length
+            if (sequenceInput.length < 10) {
+                resultsDiv.innerHTML = `
+                    <h3>🎯 Search Results</h3>
+                    <div class="error">Sequence too short. Please enter at least 10 amino acids.</div>
+                `;
+                return;
+            }
+            
+            if (sequenceInput.length > 2000) {
+                resultsDiv.innerHTML = `
+                    <h3>🎯 Search Results</h3>
+                    <div class="error">Sequence too long. Please enter no more than 2000 amino acids.</div>
                 `;
                 return;
             }
@@ -858,72 +775,58 @@
                 <h3>🎯 Search Results</h3>
                 <div class="loading">
                     <div class="spinner"></div>
-                    Searching databases...
+                    Searching databases... This may take up to 3 minutes for database searches.
                 </div>
             `;
             
             // Clear previous results
             searchResults = { custom: [], prosite: [], pfam: [], ncbi: [] };
             
-            const searchPromises = [];
-            
-            // Custom pattern search
-            if (hasCustom && motifInput) {
-                try {
-                    searchResults.custom = searchCustomPattern(sequenceInput, motifInput);
-                } catch (error) {
-                    console.error('Custom search error:', error);
-                }
-            }
-            
-            // Database searches
-            if (hasProsite) {
-                searchPromises.push(
-                    searchPROSITE(sequenceInput).then(results => {
-                        searchResults.prosite = results;
-                    }).catch(err => console.error('PROSITE search error:', err))
-                );
-            }
-            
-            if (hasPfam) {
-                searchPromises.push(
-                    searchPfam(sequenceInput).then(results => {
-                        searchResults.pfam = results;
-                    }).catch(err => console.error('Pfam search error:', err))
-                );
-            }
-            
-            if (hasNCBI) {
-                searchPromises.push(
-                    searchNCBI_CDD(sequenceInput).then(results => {
-                        searchResults.ncbi = results;
-                    }).catch(err => console.error('NCBI-CDD search error:', err))
-                );
-            }
-            
-            // Wait for all searches to complete
             try {
-                await Promise.all(searchPromises);
+                // Custom pattern search (local)
+                if (hasCustom && motifInput) {
+                    searchResults.custom = searchCustomPattern(sequenceInput, motifInput);
+                }
+                
+                // Database searches (via API)
+                const databasesToSearch = [];
+                if (hasProsite) databasesToSearch.push('prosite');
+                if (hasPfam) databasesToSearch.push('pfam');
+                if (hasNCBI) databasesToSearch.push('ncbi');
+                
+                if (databasesToSearch.length > 0) {
+                    const databaseResults = await searchDatabases(sequenceInput, databasesToSearch);
+                    
+                    // Merge results
+                    if (databaseResults.prosite) searchResults.prosite = databaseResults.prosite;
+                    if (databaseResults.pfam) searchResults.pfam = databaseResults.pfam;
+                    if (databaseResults.ncbi) searchResults.ncbi = databaseResults.ncbi;
+                }
+                
                 displayResults();
+                
             } catch (error) {
+                console.error('Search error:', error);
                 resultsDiv.innerHTML = `
                     <h3>🎯 Search Results</h3>
                     <div class="error">
-                        Error during database search: ${error.message}
+                        Error during search: ${error.message}
                         <br><br>
-                        Please try again or check your sequence.
+                        ${error.message.includes('Failed to fetch') 
+                            ? 'Backend API is not available. Please check if the backend server is running.'
+                            : 'Please try again or check your sequence and pattern.'}
                     </div>
                 `;
             }
         }
-        
+
         // Allow Enter key to trigger search
         document.addEventListener('keypress', function(event) {
             if (event.key === 'Enter' && event.ctrlKey) {
                 performSearch();
             }
         });
-        
+
         // Add some sample data for demonstration
         window.onload = function() {
             const sampleSequence = "MKLLILTCLVAVALARPKHPIKHQGLPQEVLNENLLRFFVAPFPEVFGKEKVNELSKDIGALAKVASEGSLRANLRSYLKCDPKEKGKFAGGCPPWLSEAYQGGKFIREYKSLFKYKGLYQDCNSGFGEEFDLKGKDNYCAATKCPYVGQNELMLCNEKPPGTECPVEIKHYILKENRYVSFDDGCQDCCKKMGIKPQVVKHKYIKNYGVFKKCKGGGGCC";
@@ -932,4 +835,3 @@
     </script>
 </body>
 </html>
-                                
